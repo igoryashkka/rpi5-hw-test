@@ -13,12 +13,12 @@ pressure_bus = SMBus(1)
 
 # MPU9250 IMU Sensor setup
 imu_address = 0x68
-imu_bus = SMBus(4)
+imu_bus = SMBus(1)
 imu = MPU9250.MPU9250(imu_bus, imu_address)
 imu.begin()
 
 # BMP280 Sensor setup
-bmp280_bus = SMBus(4)
+bmp280_bus = SMBus(1)
 bmp280 = BMP280(i2c_dev=bmp280_bus)
 
 # MAVLink connection setup
