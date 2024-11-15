@@ -2,7 +2,8 @@ import os
 import sys
 import time
 import subprocess
-from smbus2 import SMBus
+import threading
+import smbus
 from imusensor.MPU9250 import MPU9250
 from bmp280 import BMP280
 from pymavlink import mavutil
@@ -11,16 +12,16 @@ import serial
 
 # MS4525DO Pressure Sensor I2C address and bus
 MS4525DO_I2C_ADDR = 0x28
-pressure_bus = SMBus(1)
+pressure_bus = smbus.SMBus(1)
 
 # MPU9250 IMU Sensor setup
 imu_address = 0x68
-imu_bus = SMBus(1)
+imu_bus = smbus.SMBus(1)
 imu = MPU9250.MPU9250(imu_bus, imu_address)
 imu.begin()
 
 # BMP280 Sensor setup
-bmp280_bus = SMBus(1)
+bmp280_bus = smbus.SMBus(1)
 bmp280 = BMP280(i2c_dev=bmp280_bus)
 
 # Serial setup for communication
@@ -64,20 +65,22 @@ def read_pressure_temperature():
         print(f"Error reading from MS4525DO: {e}")
         return None
 
-def start_video_recording(filename="video.h264", duration=30):
-    """Record video from the Raspberry Pi camera using libcamera-vid."""
-    try:
-        print(f"Starting video recording: {filename} for {duration} seconds")
-        subprocess.run([
-            "libcamera-vid", 
-            "-o", filename, 
-            "-t", str(duration * 1000)  # Duration in milliseconds
-        ], check=True)
-        print("Video recording completed.")
-    except Exception as e:
-        print(f"Error during video recording: {e}")
+def video_recording_loop(filename="video.h264"):
+    """Continuous video recording from Raspberry Pi camera."""
+    while True:
+        try:
+            print(f"Starting video recording: {filename}")
+            subprocess.run([
+                "libcamera-vid", 
+                "-o", filename, 
+                "-t", "0"  # Continuous recording
+            ], check=True)
+        except Exception as e:
+            print(f"Error during video recording: {e}")
+            break
 
-def print_sensor_data():
+def sensor_data_loop():
+    """Read sensor data in a loop."""
     while True:
         # Get current timestamp
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -123,11 +126,12 @@ def print_sensor_data():
         time.sleep(4)
 
 if __name__ == "__main__":
-    # Start video recording in the background
-    video_filename = "video_output.h264"
-    recording_duration = 30  # seconds
-    start_video_recording(video_filename, recording_duration)
+    try:
+        # Start video recording in a separate thread
+        video_thread = threading.Thread(target=video_recording_loop, args=("video_output.h264",), daemon=True)
+        video_thread.start()
 
-    # Run sensor data reading loop
-    print_sensor_data()
-
+        # Start sensor data reading loop in the main thread
+        sensor_data_loop()
+    except KeyboardInterrupt:
+        print("Exiting program...")
