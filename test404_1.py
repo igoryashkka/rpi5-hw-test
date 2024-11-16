@@ -14,7 +14,7 @@ import numpy as np
 # Initialize colorama for colored output
 init(autoreset=True)
 
-# UART initialization
+# UART Initialization
 try:
     mavlink_serial = serial.Serial('/dev/ttyAMA0', baudrate=115200, timeout=1)
 except Exception as e:
@@ -33,7 +33,7 @@ except Exception as e:
     print(Fore.RED + f"Error initializing GPS UART: {e}")
     gps_serial = None
 
-# Sensor initialization
+# Sensor Initialization
 try:
     imu_bus = smbus.SMBus(1)
     imu = MPU9250.MPU9250(imu_bus, 0x68)
@@ -48,7 +48,7 @@ except Exception as e:
     print(Fore.RED + f"Error initializing BMP280: {e}")
     bmp280 = None
 
-# MS4525DO initialization
+# MS4525DO Initialization
 MS4525DO_I2C_ADDR = 0x28
 pressure_bus = smbus.SMBus(1)
 
@@ -94,6 +94,52 @@ def send_nmea(lat, lon, altitude, heading, speed):
     except Exception as e:
         print(Fore.RED + f"Error sending NMEA data: {e}")
 
+# MAVLink Stream Configuration
+def configure_mavlink_stream(connection, message_id, interval_us):
+    try:
+        message = connection.mav.command_long_encode(
+            connection.target_system,
+            connection.target_component,
+            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+            0,
+            message_id,
+            interval_us,
+            0, 0, 0, 0, 0
+        )
+        connection.mav.send(message)
+        response = connection.recv_match(type='COMMAND_ACK', blocking=True)
+        if response and response.command == mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL and response.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
+            print(Fore.GREEN + "MAVLink stream configuration accepted.")
+        else:
+            print(Fore.RED + "MAVLink stream configuration failed.")
+    except Exception as e:
+        print(Fore.RED + f"Error configuring MAVLink stream: {e}")
+
+# MAVLink Reader
+def read_mavlink():
+    if not mavlink_serial:
+        print(Fore.RED + "MAVLink UART not initialized; skipping MAVLink reading.")
+        return
+
+    try:
+        connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=115200)
+        connection.wait_heartbeat()
+        print(Fore.GREEN + "Heartbeat received from MAVLink system.")
+
+        # Configure MAVLink message stream
+        configure_mavlink_stream(connection, message_id=26, interval_us=100000)
+
+        while True:
+            try:
+                message = connection.recv_match(blocking=False)
+                if message:
+                    print(Fore.CYAN + f"MAVLink Message: {message.to_dict()}")
+            except Exception as e:
+                print(Fore.RED + f"Error receiving MAVLink message: {e}")
+            time.sleep(0.01)
+    except Exception as e:
+        print(Fore.RED + f"Error in MAVLink loop: {e}")
+
 # Video Recording
 def video_recording_loop():
     while True:
@@ -128,16 +174,6 @@ def main_loop():
         pressure = read_pressure_temperature()
         print(Fore.MAGENTA + f"Pitot Tube Pressure: {pressure if pressure else 'Error reading data'}")
 
-        # MAVLink
-        if mavlink_serial:
-            try:
-                mav_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=115200)
-                message = mav_connection.recv_match(blocking=False)
-                if message:
-                    print(Fore.CYAN + f"MAVLink: {message.to_dict()}")
-            except Exception as e:
-                print(Fore.RED + f"Error reading MAVLink data: {e}")
-
         # NEO-M6 GPS
         if gps_serial:
             try:
@@ -154,6 +190,9 @@ def main_loop():
         heading = random.uniform(0, 360)
         speed = random.uniform(0, 20)
         send_nmea(lat, lon, altitude, heading, speed)
+
+        # MAVLink
+        read_mavlink()
 
         # Increment loop counter
         i = (i + 1) % 10
