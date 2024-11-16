@@ -94,37 +94,18 @@ def send_nmea(lat, lon, altitude, heading, speed):
     except Exception as e:
         print(Fore.RED + f"Error sending NMEA data: {e}")
 
-# MAVLink Reader
-def read_mavlink():
-    if not mavlink_serial:
-        print(Fore.RED + "MAVLink UART not initialized; skipping MAVLink reading.")
-        return
-
-    mav_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=115200)
+# Video Recording
+def video_recording_loop():
     while True:
         try:
-            message = mav_connection.recv_match(blocking=False)
-            if message:
-                print(Fore.CYAN + f"MAVLink: {message.to_dict()}")
+            print(Fore.CYAN + "Starting video recording...")
+            subprocess.run(["libcamera-vid", "-o", "video_output.h264", "-t", "0"], check=True)
         except Exception as e:
-            print(Fore.RED + f"Error reading MAVLink data: {e}")
+            print(Fore.RED + f"Error during video recording: {e}")
 
-# GPS Reader
-def read_gps():
-    if not gps_serial:
-        print(Fore.RED + "GPS UART not initialized; skipping GPS reading.")
-        return
-
-    while True:
-        try:
-            if gps_serial.in_waiting > 0:
-                gps_data = gps_serial.readline().decode('ascii', errors='replace').strip()
-                print(Fore.YELLOW + f"NEO-M6 GPS: {gps_data}")
-        except Exception as e:
-            print(Fore.RED + f"Error reading GPS data: {e}")
-
-# IMU and BMP280 Reader
-def read_sensors():
+# Sequential Sensor and UART Operations
+def main_loop():
+    i = 0
     while True:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -147,42 +128,43 @@ def read_sensors():
         pressure = read_pressure_temperature()
         print(Fore.MAGENTA + f"Pitot Tube Pressure: {pressure if pressure else 'Error reading data'}")
 
-        time.sleep(1)
+        # MAVLink
+        if mavlink_serial:
+            try:
+                mav_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=115200)
+                message = mav_connection.recv_match(blocking=False)
+                if message:
+                    print(Fore.CYAN + f"MAVLink: {message.to_dict()}")
+            except Exception as e:
+                print(Fore.RED + f"Error reading MAVLink data: {e}")
 
-# Video Recording
-def video_recording_loop():
-    while True:
-        try:
-            print(Fore.CYAN + "Starting video recording...")
-            subprocess.run(["libcamera-vid", "-o", "video_output.h264", "-t", "0"], check=True)
-        except Exception as e:
-            print(Fore.RED + f"Error during video recording: {e}")
+        # NEO-M6 GPS
+        if gps_serial:
+            try:
+                if gps_serial.in_waiting > 0:
+                    gps_data = gps_serial.readline().decode('ascii', errors='replace').strip()
+                    print(Fore.YELLOW + f"NEO-M6 GPS: {gps_data}")
+            except Exception as e:
+                print(Fore.RED + f"Error reading GPS data: {e}")
 
-# Simulate GPS Data for NMEA
-def simulate_gps():
-    i = 0
-    while True:
+        # Simulate GPS Data for NMEA
         lat = 37.7925 + (i * 0.0001)
         lon = 30.4817 + (i * 0.0001)
         altitude = 100.0
         heading = random.uniform(0, 360)
         speed = random.uniform(0, 20)
         send_nmea(lat, lon, altitude, heading, speed)
+
+        # Increment loop counter
         i = (i + 1) % 10
         time.sleep(1)
 
 if __name__ == "__main__":
     try:
-        # Threads for parallel tasks
-        threading.Thread(target=read_mavlink, daemon=True).start()
-        threading.Thread(target=read_gps, daemon=True).start()
-        threading.Thread(target=read_sensors, daemon=True).start()
+        # Start video recording in a separate thread
         threading.Thread(target=video_recording_loop, daemon=True).start()
-        threading.Thread(target=simulate_gps, daemon=True).start()
 
-        # Keep main thread alive
-        while True:
-            time.sleep(1)
-
+        # Run sequential operations in the main thread
+        main_loop()
     except KeyboardInterrupt:
         print(Fore.RED + "Exiting program...")
