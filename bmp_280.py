@@ -1,7 +1,7 @@
 import time
 from bmp280 import BMP280
-from smbus2 import SMBus
-bus = SMBus(4)
+import smbus
+bus = smbus.SMBus(1)
 bmp280 = BMP280(i2c_dev=bus)
 
 while True:

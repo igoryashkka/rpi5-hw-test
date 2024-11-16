@@ -1,12 +1,12 @@
 import os
 import sys
 import time
-from smbus2 import SMBus
+import smbus
 
 from imusensor.MPU9250 import MPU9250
 
 address = 0x68
-bus = SMBus(4)
+bus = smbus.SMBus(1)
 imu = MPU9250.MPU9250(bus, address)
 imu.begin()
 

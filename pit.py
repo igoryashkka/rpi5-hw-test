@@ -1,8 +1,8 @@
-import smbus2
+import smbus
 import time
 
 MS4525DO_I2C_ADDR = 0x28
-bus = smbus2.SMBus(1)
+bus = smbus.SMBus(1)
 
 def read_pressure_temperature():
     try:
