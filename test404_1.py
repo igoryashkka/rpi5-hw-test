@@ -1,16 +1,20 @@
 import threading
 import time
+import subprocess
 import random
 from pymavlink import mavutil
 import serial
 import datetime
-import numpy as np
+import smbus
+from imusensor.MPU9250 import MPU9250
+from bmp280 import BMP280
 from colorama import Fore, Style, init
+import numpy as np
 
 # Initialize colorama for colored output
 init(autoreset=True)
 
-# Initialize UARTs
+# UART initialization
 try:
     mavlink_serial = serial.Serial('/dev/ttyAMA0', baudrate=115200, timeout=1)
 except Exception as e:
@@ -29,40 +33,59 @@ except Exception as e:
     print(Fore.RED + f"Error initializing GPS UART: {e}")
     gps_serial = None
 
+# Sensor initialization
+try:
+    imu_bus = smbus.SMBus(1)
+    imu = MPU9250.MPU9250(imu_bus, 0x68)
+    imu.begin()
+except Exception as e:
+    print(Fore.RED + f"Error initializing MPU9250: {e}")
+    imu = None
 
-# Convert latitude or longitude to NMEA format (ddmm.mmmm)
+try:
+    bmp280 = BMP280(i2c_dev=smbus.SMBus(1))
+except Exception as e:
+    print(Fore.RED + f"Error initializing BMP280: {e}")
+    bmp280 = None
+
+# MS4525DO initialization
+MS4525DO_I2C_ADDR = 0x28
+pressure_bus = smbus.SMBus(1)
+
+def read_pressure_temperature():
+    try:
+        data = pressure_bus.read_i2c_block_data(MS4525DO_I2C_ADDR, 0, 4)
+        pressure_raw = ((data[0] & 0x3F) << 8) | data[1]
+        pressure = (pressure_raw - 8192) / 16384.0
+        return pressure
+    except Exception as e:
+        print(Fore.RED + f"Error reading from MS4525DO: {e}")
+        return None
+
+# NMEA Sentence Helpers
 def decimal_to_ddmm(decimal_degrees):
     abs_val = abs(decimal_degrees)
     degrees = int(abs_val)
     minutes = (abs_val - degrees) * 60
     return degrees * 100 + minutes
 
-
-# Calculate NMEA checksum
 def calculate_checksum(s):
     checksum = 0
     for char in s:
         checksum ^= ord(char)
     return hex(checksum)[2:].upper()
 
-
-# Send NMEA sentences
 def send_nmea(lat, lon, altitude, heading, speed):
     if not nmea_serial:
         print(Fore.RED + "NMEA UART not initialized; skipping NMEA data send.")
         return
 
     try:
-        # GPGGA sentence
-        geoidal_separation = 0
-        gpgga_data = f'GPGGA,{datetime.datetime.utcnow().strftime("%H%M%S.%f")[:-3]},{abs(decimal_to_ddmm(lat)):.4f},{"N" if lat >= 0 else "S"},{abs(decimal_to_ddmm(lon)):.4f},{"E" if lon >= 0 else "W"},1,10,0.95,{altitude},M,{geoidal_separation},M,,'
+        gpgga_data = f'GPGGA,{datetime.datetime.utcnow().strftime("%H%M%S.%f")[:-3]},{abs(decimal_to_ddmm(lat)):.4f},{"N" if lat >= 0 else "S"},{abs(decimal_to_ddmm(lon)):.4f},{"E" if lon >= 0 else "W"},1,10,0.95,{altitude},M,0,M,,'
         gpgga_sentence = f'${gpgga_data}*{calculate_checksum(gpgga_data)}\r\n'
         nmea_serial.write(gpgga_sentence.encode())
         print(Fore.BLUE + f"Sent: {gpgga_sentence.strip()}")
 
-        time.sleep(0.1)
-
-        # GPRMC sentence
         gprmc_data = f'GPRMC,{datetime.datetime.utcnow().strftime("%H%M%S.%f")[:-3]},A,{abs(decimal_to_ddmm(lat)):.4f},{"N" if lat >= 0 else "S"},{abs(decimal_to_ddmm(lon)):.4f},{"E" if lon >= 0 else "W"},{speed * 1.94384:.2f},{heading:.2f},{datetime.datetime.utcnow().strftime("%d%m%y")},,,A'
         gprmc_sentence = f'${gprmc_data}*{calculate_checksum(gprmc_data)}\r\n'
         nmea_serial.write(gprmc_sentence.encode())
@@ -71,8 +94,7 @@ def send_nmea(lat, lon, altitude, heading, speed):
     except Exception as e:
         print(Fore.RED + f"Error sending NMEA data: {e}")
 
-
-# Read MAVLink data
+# MAVLink Reader
 def read_mavlink():
     if not mavlink_serial:
         print(Fore.RED + "MAVLink UART not initialized; skipping MAVLink reading.")
@@ -87,8 +109,7 @@ def read_mavlink():
         except Exception as e:
             print(Fore.RED + f"Error reading MAVLink data: {e}")
 
-
-# Read NEO-M6 GPS data
+# GPS Reader
 def read_gps():
     if not gps_serial:
         print(Fore.RED + "GPS UART not initialized; skipping GPS reading.")
@@ -102,39 +123,62 @@ def read_gps():
         except Exception as e:
             print(Fore.RED + f"Error reading GPS data: {e}")
 
+# IMU and BMP280 Reader
+def read_sensors():
+    while True:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# Main loop to simulate GPS and send NMEA sentences
+        # MPU9250
+        if imu:
+            imu.readSensor()
+            imu.computeOrientation()
+            print(Fore.YELLOW + f"\n[{timestamp}] - IMU Data")
+            print(f"Accel x: {imu.AccelVals[0]} ; Accel y: {imu.AccelVals[1]} ; Accel z: {imu.AccelVals[2]}")
+            print(f"Gyro x: {imu.GyroVals[0]} ; Gyro y: {imu.GyroVals[1]} ; Gyro z: {imu.GyroVals[2]}")
+            print(f"Roll: {imu.roll:.2f} ; Pitch: {imu.pitch:.2f} ; Yaw: {imu.yaw:.2f}")
+
+        # BMP280
+        if bmp280:
+            temperature = bmp280.get_temperature()
+            pressure_bmp = bmp280.get_pressure()
+            print(Fore.GREEN + f"Temperature: {temperature:.2f}°C, Pressure: {pressure_bmp:.2f} hPa")
+
+        # MS4525DO
+        pressure = read_pressure_temperature()
+        print(Fore.MAGENTA + f"Pitot Tube Pressure: {pressure if pressure else 'Error reading data'}")
+
+        time.sleep(1)
+
+# Video Recording
+def video_recording_loop():
+    while True:
+        try:
+            print(Fore.CYAN + "Starting video recording...")
+            subprocess.run(["libcamera-vid", "-o", "video_output.h264", "-t", "0"], check=True)
+        except Exception as e:
+            print(Fore.RED + f"Error during video recording: {e}")
+
+# Simulate GPS Data for NMEA
 def simulate_gps():
     i = 0
     while True:
-        try:
-            # Generate simulated data
-            lat = 37.7925 + (i * 0.0001)
-            lon = 30.4817 + (i * 0.0001)
-            altitude = 100.0
-            heading = random.uniform(0, 360)
-            speed = random.uniform(0, 20)
-
-            # Send simulated NMEA data
-            send_nmea(lat, lon, altitude, heading, speed)
-
-            # Increment loop counter
-            i = (i + 1) % 10
-            time.sleep(1)
-        except Exception as e:
-            print(Fore.RED + f"Error in GPS simulation: {e}")
-
+        lat = 37.7925 + (i * 0.0001)
+        lon = 30.4817 + (i * 0.0001)
+        altitude = 100.0
+        heading = random.uniform(0, 360)
+        speed = random.uniform(0, 20)
+        send_nmea(lat, lon, altitude, heading, speed)
+        i = (i + 1) % 10
+        time.sleep(1)
 
 if __name__ == "__main__":
     try:
-        # Start threads for MAVLink, GPS, and NMEA
-        mavlink_thread = threading.Thread(target=read_mavlink, daemon=True)
-        gps_thread = threading.Thread(target=read_gps, daemon=True)
-        simulate_thread = threading.Thread(target=simulate_gps, daemon=True)
-
-        mavlink_thread.start()
-        gps_thread.start()
-        simulate_thread.start()
+        # Threads for parallel tasks
+        threading.Thread(target=read_mavlink, daemon=True).start()
+        threading.Thread(target=read_gps, daemon=True).start()
+        threading.Thread(target=read_sensors, daemon=True).start()
+        threading.Thread(target=video_recording_loop, daemon=True).start()
+        threading.Thread(target=simulate_gps, daemon=True).start()
 
         # Keep main thread alive
         while True:
