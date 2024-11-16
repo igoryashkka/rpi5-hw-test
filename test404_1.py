@@ -42,11 +42,11 @@ except Exception as e:
     print(Fore.RED + f"Error initializing MPU9250: {e}")
     imu = None
 
-try:
-    bmp280 = BMP280(i2c_dev=smbus.SMBus(1))
-except Exception as e:
-    print(Fore.RED + f"Error initializing BMP280: {e}")
-    bmp280 = None
+#try:
+#    bmp280 = BMP280(i2c_dev=smbus.SMBus(1))
+#except Exception as e:
+#    print(Fore.RED + f"Error initializing BMP280: {e}")
+ #   bmp280 = None
 
 # MS4525DO Initialization
 MS4525DO_I2C_ADDR = 0x28
@@ -94,51 +94,14 @@ def send_nmea(lat, lon, altitude, heading, speed):
     except Exception as e:
         print(Fore.RED + f"Error sending NMEA data: {e}")
 
-# MAVLink Stream Configuration
-def configure_mavlink_stream(connection, message_id, interval_us):
-    try:
-        message = connection.mav.command_long_encode(
-            connection.target_system,
-            connection.target_component,
-            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
-            0,
-            message_id,
-            interval_us,
-            0, 0, 0, 0, 0
-        )
-        connection.mav.send(message)
-        response = connection.recv_match(type='COMMAND_ACK', blocking=True)
-        if response and response.command == mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL and response.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-            print(Fore.GREEN + "MAVLink stream configuration accepted.")
-        else:
-            print(Fore.RED + "MAVLink stream configuration failed.")
-    except Exception as e:
-        print(Fore.RED + f"Error configuring MAVLink stream: {e}")
-
 # MAVLink Reader
-def read_mavlink():
-    if not mavlink_serial:
-        print(Fore.RED + "MAVLink UART not initialized; skipping MAVLink reading.")
-        return
-
+def read_one_mavlink_message(connection):
     try:
-        connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=115200)
-        connection.wait_heartbeat()
-        print(Fore.GREEN + "Heartbeat received from MAVLink system.")
-
-        # Configure MAVLink message stream
-        configure_mavlink_stream(connection, message_id=26, interval_us=100000)
-
-        while True:
-            try:
-                message = connection.recv_match(blocking=False)
-                if message:
-                    print(Fore.CYAN + f"MAVLink Message: {message.to_dict()}")
-            except Exception as e:
-                print(Fore.RED + f"Error receiving MAVLink message: {e}")
-            time.sleep(0.01)
+        message = connection.recv_match(blocking=False)
+        if message:
+            print(Fore.CYAN + f"MAVLink Message: {message.to_dict()}")
     except Exception as e:
-        print(Fore.RED + f"Error in MAVLink loop: {e}")
+        print(Fore.RED + f"Error receiving MAVLink message: {e}")
 
 # Video Recording
 def video_recording_loop():
@@ -152,51 +115,58 @@ def video_recording_loop():
 # Sequential Sensor and UART Operations
 def main_loop():
     i = 0
-    while True:
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        mav_connection = mavutil.mavlink_connection('/dev/ttyAMA0', baud=115200)
+        mav_connection.wait_heartbeat()
+        print(Fore.GREEN + "Heartbeat received from MAVLink system.")
 
-        # MPU9250
-        if imu:
-            imu.readSensor()
-            imu.computeOrientation()
-            print(Fore.YELLOW + f"\n[{timestamp}] - IMU Data")
-            print(f"Accel x: {imu.AccelVals[0]} ; Accel y: {imu.AccelVals[1]} ; Accel z: {imu.AccelVals[2]}")
-            print(f"Gyro x: {imu.GyroVals[0]} ; Gyro y: {imu.GyroVals[1]} ; Gyro z: {imu.GyroVals[2]}")
-            print(f"Roll: {imu.roll:.2f} ; Pitch: {imu.pitch:.2f} ; Yaw: {imu.yaw:.2f}")
+        while True:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # BMP280
-        if bmp280:
-            temperature = bmp280.get_temperature()
-            pressure_bmp = bmp280.get_pressure()
-            print(Fore.GREEN + f"Temperature: {temperature:.2f}°C, Pressure: {pressure_bmp:.2f} hPa")
+            # Read one MAVLink message
+            read_one_mavlink_message(mav_connection)
 
-        # MS4525DO
-        pressure = read_pressure_temperature()
-        print(Fore.MAGENTA + f"Pitot Tube Pressure: {pressure if pressure else 'Error reading data'}")
+            # MPU9250
+            if imu:
+                imu.readSensor()
+                imu.computeOrientation()
+                print(Fore.YELLOW + f"\n[{timestamp}] - IMU Data")
+                print(f"Accel x: {imu.AccelVals[0]} ; Accel y: {imu.AccelVals[1]} ; Accel z: {imu.AccelVals[2]}")
+                print(f"Gyro x: {imu.GyroVals[0]} ; Gyro y: {imu.GyroVals[1]} ; Gyro z: {imu.GyroVals[2]}")
+                print(f"Roll: {imu.roll:.2f} ; Pitch: {imu.pitch:.2f} ; Yaw: {imu.yaw:.2f}")
 
-        # NEO-M6 GPS
-        if gps_serial:
-            try:
-                if gps_serial.in_waiting > 0:
-                    gps_data = gps_serial.readline().decode('ascii', errors='replace').strip()
-                    print(Fore.YELLOW + f"NEO-M6 GPS: {gps_data}")
-            except Exception as e:
-                print(Fore.RED + f"Error reading GPS data: {e}")
+            # BMP280
+#            if bmp280:
+#                temperature = bmp280.get_temperature()
+#                pressure_bmp = bmp280.get_pressure()
+#                print(Fore.GREEN + f"Temperature: {temperature:.2f}°C, Pressure: {pressure_bmp:.2f} hPa")
 
-        # Simulate GPS Data for NMEA
-        lat = 37.7925 + (i * 0.0001)
-        lon = 30.4817 + (i * 0.0001)
-        altitude = 100.0
-        heading = random.uniform(0, 360)
-        speed = random.uniform(0, 20)
-        send_nmea(lat, lon, altitude, heading, speed)
+            # MS4525DO
+            pressure = read_pressure_temperature()
+            print(Fore.MAGENTA + f"Pitot Tube Pressure: {pressure if pressure else 'Error reading data'}")
 
-        # MAVLink
-        read_mavlink()
+            # NEO-M6 GPS
+            if gps_serial:
+                try:
+                    if gps_serial.in_waiting > 0:
+                        gps_data = gps_serial.readline().decode('ascii', errors='replace').strip()
+                        print(Fore.YELLOW + f"NEO-M6 GPS: {gps_data}")
+                except Exception as e:
+                    print(Fore.RED + f"Error reading GPS data: {e}")
 
-        # Increment loop counter
-        i = (i + 1) % 10
-        time.sleep(1)
+            # Simulate GPS Data for NMEA
+            lat = 37.7925 + (i * 0.0001)
+            lon = 30.4817 + (i * 0.0001)
+            altitude = 100.0
+            heading = random.uniform(0, 360)
+            speed = random.uniform(0, 20)
+            send_nmea(lat, lon, altitude, heading, speed)
+
+            # Increment loop counter
+            i = (i + 1) % 10
+            time.sleep(1)
+    except Exception as e:
+        print(Fore.RED + f"Error in main loop: {e}")
 
 if __name__ == "__main__":
     try:
