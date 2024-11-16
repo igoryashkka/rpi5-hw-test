@@ -32,7 +32,7 @@ echo "Virtual environment '$VENV_NAME' activated."
 # Install necessary libraries
 echo "Installing required libraries..."
 python3 -m pip install --upgrade pip
-python3 -m pip install pyserial smbus2 smbus numpy easydict imusensor pymavlink bmp280
+python3 -m pip install pyserial smbus numpy easydict imusensor pymavlink mavproxy bmp280
 
 # Install libcamera-apps
 echo "Installing libcamera-apps..."
