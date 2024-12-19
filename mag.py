@@ -1,79 +1,61 @@
-import smbus2
+import smbus
 import time
 
+IST8308_I2C_ADDRESS = 0x1E
+REG_WAI = 0x00
+REG_CNTL3 = 0x0C
+REG_STAT = 0x02
+REG_DATAXL = 0x03
+REG_DATAXH = 0x04
+REG_DATAYL = 0x05
+REG_DATAYH = 0x06
+REG_DATAZL = 0x07
+REG_DATAZH = 0x08
+CNTL3_SRST = 0x01
+DRDY_MASK = 0x01
 
-I2C_BUS = 1
-MAGNETOMETER_ADDRESS = 0x1E
+class IST8308:
+    def __init__(self, bus_num=1):
+        self.bus = smbus.SMBus(bus_num)
 
+    def write_register(self, reg, value):
+        self.bus.write_byte_data(IST8308_I2C_ADDRESS, reg, value)
 
-WHO_AM_I_REG = 0x00  
-DATA_X_LSB = 0x03    
-DATA_X_MSB = 0x04    
-DATA_Y_LSB = 0x05    
-DATA_Y_MSB = 0x06    
-DATA_Z_LSB = 0x07    
-DATA_Z_MSB = 0x08    
-CTRL1 = 0x0A         
-CTRL2 = 0x0B         
+    def read_register(self, reg):
+        return self.bus.read_byte_data(IST8308_I2C_ADDRESS, reg)
 
+    def read_registers(self, start_reg, length):
+        return self.bus.read_i2c_block_data(IST8308_I2C_ADDRESS, start_reg, length)
 
-bus = smbus2.SMBus(I2C_BUS)
+    def reset(self):
+        self.write_register(REG_CNTL3, CNTL3_SRST)
+        time.sleep(0.05)
 
-def initialize_ist8308():
-    """Initialize the IST8308 magnetometer."""
-    try:
-        
-        device_id = bus.read_byte_data(MAGNETOMETER_ADDRESS, WHO_AM_I_REG)
-        print(f"Device ID: {device_id:#02x}")
-        
+    def configure(self):
+        self.write_register(REG_CNTL3, 0x00)
 
+    def read_data(self):
+        status = self.read_register(REG_STAT)
+        if status & DRDY_MASK:
+            data = self.read_registers(REG_DATAXL, 6)
+            x = (data[1] << 8) | data[0]
+            y = (data[3] << 8) | data[2]
+            z = (data[5] << 8) | data[4]
+            x = x - 65536 if x > 32767 else x
+            y = y - 65536 if y > 32767 else y
+            z = z - 65536 if z > 32767 else z
+            return x, y, z
+        return None
 
-        bus.write_byte_data(MAGNETOMETER_ADDRESS, CTRL1, 0x01)  
-        print("Magnetometer initialized.")
-    except Exception as e:
-        print(f"Error initializing magnetometer: {e}")
-
-def read_magnetometer_data():
-    """Read and return X, Y, Z magnetometer data."""
-    try:
-        
-        x_lsb = bus.read_byte_data(MAGNETOMETER_ADDRESS, DATA_X_LSB)
-        x_msb = bus.read_byte_data(MAGNETOMETER_ADDRESS, DATA_X_MSB)
-        y_lsb = bus.read_byte_data(MAGNETOMETER_ADDRESS, DATA_Y_LSB)
-        y_msb = bus.read_byte_data(MAGNETOMETER_ADDRESS, DATA_Y_MSB)
-        z_lsb = bus.read_byte_data(MAGNETOMETER_ADDRESS, DATA_Z_LSB)
-        z_msb = bus.read_byte_data(MAGNETOMETER_ADDRESS, DATA_Z_MSB)
-
-       
-        x = (x_msb << 8) | x_lsb
-        y = (y_msb << 8) | y_lsb
-        z = (z_msb << 8) | z_lsb
-
-       
-        if x >= 0x8000:
-            x -= 0x10000
-        if y >= 0x8000:
-            y -= 0x10000
-        if z >= 0x8000:
-            z -= 0x10000
-
-        return x, y, z
-    except Exception as e:
-        print(f"Error reading magnetometer data: {e}")
-        return None, None, None
+def main():
+    sensor = IST8308()
+    sensor.reset()
+    sensor.configure()
+    while True:
+        data = sensor.read_data()
+        if data:
+            print(f"Magnetometer data: X={data[0]} Y={data[1]} Z={data[2]}")
+        time.sleep(0.1)
 
 if __name__ == "__main__":
- 
-    initialize_ist8308()
-
-    
-    try:
-        while True:
-            x, y, z = read_magnetometer_data()
-            if x is not None:
-                print(f"Magnetic field (X, Y, Z): {x}, {y}, {z}")
-            time.sleep(0.5)  
-    except KeyboardInterrupt:
-        print("Terminating program.")
-    finally:
-        bus.close()
+    main()
